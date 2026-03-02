@@ -1,0 +1,17 @@
+g++ -I . -I /RAID2/COURSE/2025_Spring/mlchip/mlchipTA01/systemc-2.3.3/include -L . -L /RAID2/COURSE/2025_Spring/mlchip/mlchipTA01/systemc-2.3.3/lib-linux64 -o run *.cpp -lsystemc-2.3.3 -Wl,-rpath,/RAID2/COURSE/2025_Spring/mlchip/mlchipTA01/systemc-2.3.3/lib-linux64
+./run 
+
+        SystemC 2.3.3-Accellera --- Mar  4 2025 01:46:38
+        Copyright (c) 1996-2018 by all Contributors,
+        ALL RIGHTS RESERVED
+
+  ============================                  
+  +                          +         |\__|\ 
+  +   [0m[1;32mCongratulations !![0m     +        / O.O  |  
+  +                          +      /_____   |  
+  +   Simulation completed   +     /^ ^ ^ \  | 
+  +   at 228 th cycle        +    |^ ^ ^ ^ |w| 
+  +                          +     \m___m__|_| 
+  ============================                  
+
+Info: /OSCI/SystemC: Simulation stopped by user.

@@ -1,0 +1,127 @@
+#ifndef ROUTER_H
+#define ROUTER_H
+#include "systemc.h"
+#include <deque>
+
+// enumeration for directions
+enum Dir { EAST=0, SOUTH=1, WEST=2, NORTH=3, LOCAL=4 };
+
+SC_MODULE(Router) {
+    sc_in  < bool >  rst;
+    sc_in  < bool >  clk;
+
+    sc_out < sc_lv<34> >  out_flit[5];
+    sc_out < bool >  out_req[5];
+    sc_in  < bool >  in_ack[5];
+
+    sc_in  < sc_lv<34> >  in_flit[5];
+    sc_in  < bool >  in_req[5];
+    sc_out < bool >  out_ack[5];
+
+    int router_id;      // router id
+    int stored_o[5];    // store selected output direction for each input
+    int locked_by[5];   // output port lock owner (-1 if free)
+    std::deque<sc_lv<34> > in_buf[5];
+    std::deque<sc_lv<34> > out_buf[5];
+
+    SC_CTOR(Router) {
+        SC_THREAD(route);
+        sensitive << clk.pos();
+    }
+
+    void route();
+    int compute_dir(int dest);
+};
+
+void Router::route() {
+    // Reset all state and buffers
+    for (int i = 0; i < 5; ++i) { 
+        out_req[i].write(false);
+        out_ack[i].write(false);
+
+        in_buf[i].clear();
+        out_buf[i].clear();
+        stored_o[i] = -1;
+        locked_by[i] = -1;
+    }
+    wait();     // wait for reset
+
+    while (true) {
+        // receive flits
+        for (int i = 0; i < 5; ++i) {
+            if (in_req[i].read()) {
+                sc_lv<34> flit = in_flit[i].read();
+                in_buf[i].push_back(flit);
+                out_ack[i].write(true);
+            } 
+            else {
+                out_ack[i].write(false);
+            }
+        }
+
+        // routing decision and forwarding to output buffer
+        // calculate direction only if it is header flit and locked it
+        for (int i = 0; i < 5; ++i) {
+            if (!in_buf[i].empty()) {
+                sc_lv<34> f = in_buf[i].front();
+                std::string type = f.range(33,32).to_string();
+
+                if (stored_o[i] == -1) {
+                    // header
+                    if (type == "10") {
+                        int dst = f.range(15,0).to_uint();  // get destination
+                        int o = compute_dir(dst);   // compute destination
+                        if (locked_by[o] == -1) {
+                            stored_o[i] = o;
+                            locked_by[o] = i;
+                        }
+                    }
+                }
+
+                int o = stored_o[i];
+                if (locked_by[o] == i && out_buf[o].size() < 4) {
+                    out_buf[o].push_back(f);
+                    in_buf[i].pop_front();
+                    // tail
+                    if (type == "01") {
+                        stored_o[i] = -1;
+                        locked_by[o] = -1;
+                    }
+                }
+            }
+        }
+
+        // transmit flit
+        for (int o = 0; o < 5; ++o) {
+            if (!out_buf[o].empty()) {
+                out_flit[o].write(out_buf[o].front());
+                out_req[o].write(true);
+
+                if (in_ack[o].read()) {
+                    out_buf[o].pop_front();
+                }
+            } 
+            else {
+                out_req[o].write(false);
+            }
+        }
+
+        wait(); // wait for next clock cycle
+    }
+}
+
+// calculate destination (route in x direction first, then y)
+int Router::compute_dir(int dest) {
+    int x  = router_id % 4;
+    int y = router_id / 4;
+    int dx = dest % 4;
+    int dy = dest / 4;
+
+    if (x < dx) return EAST;
+    if (x > dx) return WEST;
+    if (y < dy) return SOUTH;
+    if (y > dy) return NORTH;
+    return LOCAL;
+}
+
+#endif
