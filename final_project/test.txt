@@ -1,0 +1,273 @@
+remaining: 150528
+ROM: loaded layer 0 weight (150528 floats)
+weight end: 0.879652
+router: 0 dst: 0 done
+remaining: 23232
+ROM: loaded layer 1 weight (23232 floats)
+-----------------------------------
+core_id: 0 start!
+input_data.size(): 150528
+core_id: 0 done!
+result.size(): 154587
+weight end: 0.090307
+remaining: 64
+ROM: loaded layer 1 bias (64 floats)
+weight end: -0.014617
+remaining: 307200
+ROM: loaded layer 2 weight (307200 floats)
+router: 0 dst: 1 done
+core send!
+-----------------------------------
+router: 1 dst: 1 done
+router: 0 dst: 1 done
+router: 1 dst: 1 done
+router: 0 dst: 1 done
+router: 1 dst: 1 done
+-----------------------------------
+core_id: 1 start!
+input_data.size(): 154587
+weight.size(): 23232
+bias.size(): 64
+input_data[0]: 0
+weight[0]: 0.11864
+core_id: 1 done!
+result.size(): 46656
+router: 1 dst: 2 done
+core send!
+-----------------------------------
+router: 2 dst: 2 done
+weight end: 0.02433
+router: 0 dst: 2 done
+remaining: 192
+ROM: loaded layer 2 bias (192 floats)
+router: 1 dst: 2 done
+router: 2 dst: 2 done
+weight end: 0.072982
+router: 0 dst: 2 done
+remaining: 663552
+ROM: loaded layer 3 weight (663552 floats)
+router: 1 dst: 2 done
+router: 2 dst: 2 done
+-----------------------------------
+core_id: 2 start!
+input_data.size(): 46656
+weight.size(): 307200
+bias.size(): 192
+input_data[0]: 0
+weight[0]: 0.003625
+core_id: 2 done!
+result.size(): 32448
+router: 2 dst: 3 done
+core send!
+-----------------------------------
+router: 3 dst: 3 done
+weight end: -0.057636
+router: 0 dst: 3 done
+remaining: 384
+ROM: loaded layer 3 bias (384 floats)
+router: 1 dst: 3 done
+router: 2 dst: 3 done
+router: 3 dst: 3 done
+weight end: -0.011489
+router: 0 dst: 3 done
+remaining: 884736
+ROM: loaded layer 4 weight (884736 floats)
+router: 1 dst: 3 done
+router: 2 dst: 3 done
+router: 3 dst: 3 done
+-----------------------------------
+core_id: 3 start!
+input_data.size(): 32448
+weight.size(): 663552
+bias.size(): 384
+input_data[0]: 1.28384
+weight[0]: 0.024858
+core_id: 3 done!
+result.size(): 64896
+router: 3 dst: 4 done
+core send!
+-----------------------------------
+router: 2 dst: 4 done
+router: 1 dst: 4 done
+router: 0 dst: 4 done
+router: 4 dst: 4 done
+weight end: 0.006778
+router: 0 dst: 4 done
+remaining: 256
+ROM: loaded layer 4 bias (256 floats)
+router: 4 dst: 4 done
+weight end: 0.143427
+router: 0 dst: 4 done
+remaining: 589824
+ROM: loaded layer 5 weight (589824 floats)
+router: 4 dst: 4 done
+-----------------------------------
+core_id: 4 start!
+input_data.size(): 64896
+weight.size(): 884736
+bias.size(): 256
+input_data[0]: 0
+weight[0]: -0.001973
+core_id: 4 done!
+result.size(): 43264
+router: 4 dst: 5 done
+core send!
+-----------------------------------
+router: 5 dst: 5 done
+weight end: 0.00075
+router: 0 dst: 5 done
+remaining: 256
+ROM: loaded layer 5 bias (256 floats)
+router: 1 dst: 5 done
+router: 5 dst: 5 done
+weight end: -0.066487
+router: 0 dst: 5 done
+remaining: 37748736
+ROM: loaded layer 6 weight (37748736 floats)
+router: 1 dst: 5 done
+router: 5 dst: 5 done
+-----------------------------------
+core_id: 5 start!
+input_data.size(): 43264
+weight.size(): 589824
+bias.size(): 256
+input_data[0]: 1.61679
+weight[0]: 0.004501
+core_id: 5 done!
+result.size(): 9216
+router: 5 dst: 6 done
+core send!
+-----------------------------------
+router: 6 dst: 6 done
+weight end: -0.004463
+router: 0 dst: 6 done
+remaining: 4096
+ROM: loaded layer 6 bias (4096 floats)
+router: 1 dst: 6 done
+router: 2 dst: 6 done
+router: 6 dst: 6 done
+weight end: 0.009528
+router: 0 dst: 6 done
+router: 1 dst: 6 done
+router: 2 dst: 6 done
+router: 6 dst: 6 done
+-----------------------------------
+core_id: 6 start!
+input_data.size(): 9216
+weight.size(): 37748736
+bias.size(): 4096
+input_data[0]: 0
+weight[0]: 0.004002
+core_id: 6 done!
+result.size(): 4096
+router: 6 dst: 0 done
+core send!
+-----------------------------------
+router: 5 dst: 0 done
+router: 4 dst: 0 done
+router: 0 dst: 0 done
+Top 100 classes:
+=================================================
+  idx |      val | possibility | class name
+-------------------------------------------------
+ 3720 |    19.87 |       41.87 | 
+ 1368 |    18.97 |       17.08 | 
+  141 |    18.49 |       10.52 | 
+ 3231 |    18.30 |        8.72 | 
+ 2911 |    17.81 |        5.33 | 
+ 2198 |    17.52 |        4.00 | 
+ 2065 |    16.78 |        1.91 | 
+ 3072 |    16.61 |        1.61 | 
+ 2526 |    16.54 |        1.50 | 
+ 2345 |    16.17 |        1.04 | 
+ 2227 |    15.94 |        0.83 | 
+ 2977 |    15.66 |        0.62 | 
+  982 |    15.53 |        0.55 | 
+  212 |    15.27 |        0.42 | 
+ 1437 |    14.96 |        0.31 | 
+ 3265 |    14.89 |        0.29 | 
+ 1888 |    14.57 |        0.21 | 
+ 1670 |    14.54 |        0.20 | 
+ 1517 |    14.44 |        0.18 | 
+ 1016 |    14.41 |        0.18 | 
+ 1281 |    14.20 |        0.15 | 
+ 3323 |    14.17 |        0.14 | 
+ 1005 |    14.13 |        0.13 | 
+ 1629 |    14.12 |        0.13 | 
+ 2419 |    13.93 |        0.11 | 
+ 3207 |    13.88 |        0.10 | 
+ 2930 |    13.71 |        0.09 | 
+ 3165 |    13.63 |        0.08 | 
+ 2572 |    13.51 |        0.07 | 
+ 1913 |    13.44 |        0.07 | 
+ 3821 |    13.40 |        0.06 | 
+  500 |    13.35 |        0.06 | 
+ 2441 |    13.31 |        0.06 | 
+ 1777 |    13.25 |        0.06 | 
+ 2273 |    13.25 |        0.06 | 
+ 2129 |    13.19 |        0.05 | 
+ 1740 |    13.13 |        0.05 | 
+  965 |    12.98 |        0.04 | 
+  665 |    12.92 |        0.04 | 
+  363 |    12.85 |        0.04 | 
+ 3147 |    12.82 |        0.04 | 
+ 1453 |    12.81 |        0.04 | 
+  135 |    12.76 |        0.03 | 
+ 1607 |    12.71 |        0.03 | 
+ 1903 |    12.62 |        0.03 | 
+ 3555 |    12.57 |        0.03 | 
+  650 |    12.50 |        0.03 | 
+ 1048 |    12.49 |        0.03 | 
+  302 |    12.49 |        0.03 | 
+ 1706 |    12.47 |        0.03 | 
+   31 |    12.47 |        0.03 | 
+ 1493 |    12.32 |        0.02 | 
+  656 |    12.32 |        0.02 | 
+  785 |    12.28 |        0.02 | 
+ 3968 |    12.25 |        0.02 | 
+ 1352 |    12.23 |        0.02 | 
+ 2159 |    12.18 |        0.02 | 
+ 1251 |    12.16 |        0.02 | 
+ 3070 |    12.14 |        0.02 | 
+  438 |    12.08 |        0.02 | 
+   44 |    12.03 |        0.02 | 
+  915 |    12.00 |        0.02 | 
+  786 |    11.98 |        0.02 | 
+  311 |    11.96 |        0.02 | 
+ 1597 |    11.91 |        0.01 | 
+ 1098 |    11.84 |        0.01 | 
+ 2988 |    11.77 |        0.01 | 
+ 2914 |    11.73 |        0.01 | 
+ 1988 |    11.61 |        0.01 | 
+ 3379 |    11.53 |        0.01 | 
+ 1131 |    11.52 |        0.01 | 
+ 1370 |    11.52 |        0.01 | 
+ 3344 |    11.50 |        0.01 | 
+ 4069 |    11.45 |        0.01 | 
+ 3481 |    11.40 |        0.01 | 
+  153 |    11.39 |        0.01 | 
+ 2652 |    11.39 |        0.01 | 
+  807 |    11.23 |        0.01 | 
+ 3259 |    11.18 |        0.01 | 
+ 2186 |    11.18 |        0.01 | 
+ 1470 |    11.02 |        0.01 | 
+ 1431 |    11.02 |        0.01 | 
+   15 |    11.00 |        0.01 | 
+  831 |    11.00 |        0.01 | 
+  100 |    11.00 |        0.01 | 
+ 2587 |    10.99 |        0.01 | 
+  627 |    10.98 |        0.01 | 
+  960 |    10.91 |        0.01 | 
+ 1559 |    10.90 |        0.01 | 
+ 2299 |    10.84 |        0.01 | 
+ 1143 |    10.83 |        0.00 | 
+ 1087 |    10.83 |        0.00 | 
+ 2469 |    10.81 |        0.00 | 
+ 3159 |    10.80 |        0.00 | 
+ 3157 |    10.80 |        0.00 | 
+  342 |    10.78 |        0.00 | 
+ 1424 |    10.78 |        0.00 | 
+ 3095 |    10.77 |        0.00 | 
+  705 |    10.75 |        0.00 | 
+ 3505 |    10.71 |        0.00 | 
+=================================================

@@ -1,0 +1,1323 @@
+// ROM.h
+#ifndef ROM_H
+#define ROM_H
+
+#include "systemc.h"
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <map>
+using namespace std;
+
+SC_MODULE( ROM ) {
+    sc_in  < bool >  clk;
+    sc_in  < bool >  rst;
+    
+    // AXI4 Slave Interface - Read Address Channel
+    sc_in  < sc_lv<4> >  ARID;       // Read address ID
+    sc_in  < sc_lv<32> > ARADDR;     // Read address
+    sc_in  < sc_lv<8> >  ARLEN;      // Burst length
+    sc_in  < sc_lv<3> >  ARSIZE;     // Burst size
+    sc_in  < sc_lv<2> >  ARBURST;    // Burst type
+    sc_in  < bool >      ARVALID;    // Read address valid
+    sc_out < bool >      ARREADY;    // Read address ready
+
+    // AXI4 Slave Interface - Read Data Channel
+    sc_out < sc_lv<4> >  RID;        // Read ID tag
+    sc_out < sc_lv<32> > RDATA;      // Read data
+    sc_out < sc_lv<2> >  RRESP;      // Read response
+    sc_out < bool >      RLAST;      // Read last
+    sc_out < bool >      RVALID;     // Read valid
+    sc_in  < bool >      RREADY;     // Read ready
+
+    // Load all data files into memory at startup
+    void load_data_files();
+    uint32_t read_memory(uint32_t addr);
+
+    // Memory storage
+    std::map<uint32_t, float> memory;
+    
+    // Data file management
+    string DATA_PATH;
+    string IMAGE_FILE_NAME;
+    
+    // Read transaction state
+    sc_lv<4> current_rid;
+    uint32_t current_addr;
+    int remaining_beats;
+    bool transaction_active;
+
+    SC_CTOR( ROM ) {
+        DATA_PATH = "./data/";
+        
+        const char* env_file = getenv("IMAGE_FILE_NAME");
+        if (env_file != NULL) {
+            IMAGE_FILE_NAME = env_file;
+        } else {
+            IMAGE_FILE_NAME = "cat.txt";
+        }
+
+        SC_THREAD( run );
+        sensitive << clk.pos();
+
+        load_data_files();
+    }
+    void load_file(const string& filename, uint32_t base_addr);
+    void run();
+};
+#endif
+
+// ROM.cpp
+#include "ROM.h"
+
+// load file data into memory
+void ROM::load_file(const string& filename, uint32_t base_addr) {
+    ifstream file(filename.c_str());
+    if (!file.is_open()) {
+        cout << "Warning: Could not open file " << filename << endl;
+        return;
+    }
+    
+    float value;
+    uint32_t addr = base_addr;
+    while (file >> value) {
+        memory[addr] = value;
+        addr += 4; // 4 bytes per float
+    }
+    file.close();
+    cout << "ROM: Loaded " << filename << " at address 0x" << hex << base_addr << dec << endl;
+};
+
+void ROM::load_data_files() {
+    // Memory mapping addresses
+    const uint32_t INPUT_BASE_ADDR = 0x00000000;
+    const uint32_t CONV1_WEIGHT_ADDR = 0x01000000;
+    const uint32_t CONV1_BIAS_ADDR = 0x02000000;
+    const uint32_t CONV2_WEIGHT_ADDR = 0x03000000;
+    const uint32_t CONV2_BIAS_ADDR = 0x04000000;
+    const uint32_t CONV3_WEIGHT_ADDR = 0x05000000;
+    const uint32_t CONV3_BIAS_ADDR = 0x06000000;
+    const uint32_t CONV4_WEIGHT_ADDR = 0x07000000;
+    const uint32_t CONV4_BIAS_ADDR = 0x08000000;
+    const uint32_t CONV5_WEIGHT_ADDR = 0x09000000;
+    const uint32_t CONV5_BIAS_ADDR = 0x0A000000;
+    const uint32_t FC6_WEIGHT_ADDR = 0x0B000000;
+    const uint32_t FC6_BIAS_ADDR = 0x1B000000;
+    const uint32_t FC7_WEIGHT_ADDR = 0x2B000000;
+    const uint32_t FC7_BIAS_ADDR = 0x3B000000;
+    const uint32_t FC8_WEIGHT_ADDR = 0x4B000000;
+    const uint32_t FC8_BIAS_ADDR = 0x5B000000;
+
+    // Load input data
+    load_file(DATA_PATH + IMAGE_FILE_NAME, INPUT_BASE_ADDR);
+    
+    // Load conv layer weights and biases
+    for (int i = 1; i <= 5; i++) {
+        stringstream ss;
+        ss << i;
+        uint32_t weight_addr = CONV1_WEIGHT_ADDR + (i-1) * 0x2000000;
+        uint32_t bias_addr = CONV1_BIAS_ADDR + (i-1) * 0x2000000;
+        
+        load_file(DATA_PATH + "conv" + ss.str() + "_weight.txt", weight_addr);
+        load_file(DATA_PATH + "conv" + ss.str() + "_bias.txt", bias_addr);
+    }
+    
+    // Load FC layer weights and biases
+    for (int i = 6; i <= 8; i++) {
+        stringstream ss;
+        ss << i;
+        uint32_t weight_addr = FC6_WEIGHT_ADDR + (i-6) * 0x20000000;
+        uint32_t bias_addr = FC6_BIAS_ADDR + (i-6) * 0x20000000;
+        
+        load_file(DATA_PATH + "fc" + ss.str() + "_weight.txt", weight_addr);
+        load_file(DATA_PATH + "fc" + ss.str() + "_bias.txt", bias_addr);
+    }
+    cout << "ROM memory size: " << memory.size() << endl;
+}
+
+uint32_t ROM::read_memory(uint32_t addr) {
+    std::map<uint32_t, float>::iterator it = memory.find(addr);
+    if (it != memory.end()) {
+        uint32_t result;
+        memcpy(&result, &(it->second), sizeof(float));
+        return result;
+    } else {
+        // Return 0 if address not found
+        return 0;
+    }
+}
+
+void ROM::run() {
+    while (true) {
+        uint32_t burst_type;
+        wait();
+        if (rst.read()) {
+            transaction_active = false;
+            ARREADY.write(false);
+            RVALID.write(false);
+            RLAST.write(false);
+            continue;
+        }
+        // Handle read address channel
+        if (ARVALID.read() && !transaction_active) {
+            // Accept read address
+            current_rid = ARID.read();
+            current_addr = ARADDR.read().to_uint();
+            remaining_beats = ARLEN.read().to_uint() + 1; // ARLEN is actual length - 1
+            burst_type = ARBURST.read().to_uint();
+            transaction_active = true;
+            
+            ARREADY.write(true);
+            wait();
+            ARREADY.write(false);
+        }
+        
+        // Handle read data channel
+        if (transaction_active && RREADY.read()) {
+            // Send data
+            RID.write(current_rid);
+            RDATA.write(read_memory(current_addr));
+            RRESP.write(0); // OKAY
+            RVALID.write(true);
+            
+            remaining_beats--;
+            if (remaining_beats == 0) {
+                RLAST.write(true);
+                transaction_active = false;
+            } else {
+                RLAST.write(false);
+                if (burst_type == 1) {
+                    current_addr += 4; // INCR burst
+                } else if (burst_type == 0) {
+                    // FIXED burst：do nothing
+                } else {
+                    // unsupported burst type
+                    cout << "Unsupported burst type: " << burst_type << endl;
+                }
+            }
+            
+            wait();
+            RVALID.write(false);
+            RLAST.write(false);
+        } else {
+            wait();
+        }
+    }
+}
+
+// controller.h
+#ifndef CONTROLLER_H
+#define CONTROLLER_H
+
+#include "systemc.h"
+#include <string>
+#include <sstream>
+#include <cstring>
+#include <cmath>
+#include <iostream>
+#include <algorithm>
+#include <iomanip>
+#include <vector>
+using namespace std;
+
+enum DATA { INPUT = 0, WEIGHT = 1, BIAS = 2 };
+
+SC_MODULE( Controller ) {
+    sc_in  < bool >  rst;
+    sc_in  < bool >  clk;
+    
+    // AXI4 Master Interface - Read Address Channel
+    sc_out < sc_lv<4> >  ARID;       // Read address ID
+    sc_out < sc_lv<32> > ARADDR;     // Read address
+    sc_out < sc_lv<8> >  ARLEN;      // Burst length
+    sc_out < sc_lv<3> >  ARSIZE;     // Burst size
+    sc_out < sc_lv<2> >  ARBURST;    // Burst type
+    sc_out < bool >      ARVALID;    // Read address valid
+    sc_in  < bool >      ARREADY;    // Read address ready
+
+    // AXI4 Master Interface - Read Data Channel
+    sc_in  < sc_lv<4> >  RID;        // Read ID tag
+    sc_in  < sc_lv<32> > RDATA;      // Read data
+    sc_in  < sc_lv<2> >  RRESP;      // Read response
+    sc_in  < bool >      RLAST;      // Read last
+    sc_in  < bool >      RVALID;     // Read valid
+    sc_out < bool >      RREADY;     // Read ready
+
+    // to router0
+    sc_out < sc_lv<34> > flit_tx;
+    sc_out < bool > req_tx;
+    sc_in  < bool > ack_tx;
+
+    // from router0
+    sc_in  < sc_lv<34> > flit_rx;
+    sc_in  < bool > req_rx;
+    sc_out < bool > ack_rx;
+
+    SC_CTOR(Controller) {
+        SC_THREAD(fetch);
+        sensitive << clk.pos();
+        dont_initialize();
+
+        SC_THREAD(receive);
+        sensitive << clk.pos();
+        dont_initialize();
+    }
+
+    void fetch();
+    void receive();
+    void packet2flit(std::vector<float> data, int dst, int data_type);
+    void axi_read_transaction(sc_lv<32> addr, int burst_len);
+
+    int curr_layer;
+    int curr_type;
+    
+    // Memory mapping addresses (same as in controller)
+    static const uint32_t INPUT_BASE_ADDR = 0x00000000;
+    static const uint32_t CONV1_WEIGHT_ADDR = 0x01000000;
+    static const uint32_t CONV1_BIAS_ADDR = 0x02000000;
+    static const uint32_t CONV2_WEIGHT_ADDR = 0x03000000;
+    static const uint32_t CONV2_BIAS_ADDR = 0x04000000;
+    static const uint32_t CONV3_WEIGHT_ADDR = 0x05000000;
+    static const uint32_t CONV3_BIAS_ADDR = 0x06000000;
+    static const uint32_t CONV4_WEIGHT_ADDR = 0x07000000;
+    static const uint32_t CONV4_BIAS_ADDR = 0x08000000;
+    static const uint32_t CONV5_WEIGHT_ADDR = 0x09000000;
+    static const uint32_t CONV5_BIAS_ADDR = 0x0A000000;
+    static const uint32_t FC6_WEIGHT_ADDR = 0x0B000000;
+    static const uint32_t FC6_BIAS_ADDR = 0x1B000000;
+    static const uint32_t FC7_WEIGHT_ADDR = 0x2B000000;
+    static const uint32_t FC7_BIAS_ADDR = 0x3B000000;
+    static const uint32_t FC8_WEIGHT_ADDR = 0x4B000000;
+    static const uint32_t FC8_BIAS_ADDR = 0x5B000000;
+};
+#endif
+
+//controller.cpp
+#include "controller.h"
+
+#define get_cycle() int(sc_time_stamp().to_seconds() * 1e9 / 10)
+void print_pass();
+
+bool comparePairs(const std::pair<float, int>& a, const std::pair<float, int>& b) {
+    return a.first > b.first;
+}
+
+// Softmax
+vector<float> softmax(const vector<float>& input) {
+    vector<float> output(input.size());
+    float sum = 0;
+    for (int i = 0; i < input.size(); ++i) {
+        output[i] = exp(input[i]);
+        sum += output[i];
+    }
+    for (int i = 0; i < output.size(); ++i) {
+        output[i] /= sum;
+    }
+    return output;
+}
+
+void Controller::packet2flit(vector<float> data, int dst, int data_type){
+    // packet to flits and give them to NoC (PE0, dest_id = 0)
+    int src = 15;
+    for (int i = 0; i < data.size() + 2; ++i) {
+        sc_lv<34> flit;
+        string type;
+        if (i == 0) type = "10";  // header
+        else if (i == data.size() + 1) type = "01";  // tail
+        else type = "00";  // body
+
+        flit.range(33, 32) = type.c_str();
+        if (type == "10" || type == "01") {
+            flit.range(31, 28) = sc_lv<4>(src);
+            flit.range(27, 24) = sc_lv<4>(dst);
+            flit.range(23, 22) = sc_lv<2>(data_type);  // use only 2 bits
+            flit.range(21, 0)  = 0; // optional: padding
+        }
+        else {
+            uint32_t bits;
+            // if(i == data.size())
+            //     cout << "weight end: " << data[i - 1] << endl;
+            std::memcpy(&bits, &data[i - 1], sizeof(float));
+            flit.range(31, 0) = sc_lv<32>(bits);  // full float body
+        }
+
+        req_tx.write(true);
+        flit_tx.write(flit);
+        do { wait(); } while (!ack_tx.read());
+        req_tx.write(false);
+    }
+}
+
+void Controller::axi_read_transaction(sc_lv<32> addr, int burst_len) {
+    // AXI4 Read Address Phase
+    ARID.write(sc_lv<4>(0));
+    ARADDR.write(addr);
+    ARLEN.write(sc_lv<8>(burst_len-1));
+    ARSIZE.write(sc_lv<3>(2));
+    ARBURST.write(sc_lv<2>(1));
+    ARVALID.write(true);
+    
+    // Wait for address handshake
+    ARVALID.write(true);
+    do { wait(); } while (!ARREADY.read());
+    ARVALID.write(false);
+    
+    // Prepare for data phase
+    RREADY.write(true);
+}
+
+void Controller::fetch() {
+    vector<float> input_data;  // collect all input / weights / biases
+    int data_type;
+    
+    while(true){
+        wait();
+
+        if (rst.read()) {
+            req_tx.write(false);
+            ARVALID.write(false);
+            RREADY.write(false);
+            curr_layer = -1;
+            curr_type = 0;
+            wait();  
+            continue;
+        }
+
+        if (curr_type == 0 && curr_layer != -1 && curr_layer != 0) {
+            data_type = BIAS;
+            curr_type = 1;
+        }
+        else { 
+            data_type = WEIGHT;
+            curr_type = 0; 
+            curr_layer++; 
+        }
+        if(curr_layer == 0) data_type = INPUT;
+        
+        if(curr_layer < 9){
+            // Determine memory address based on layer and type
+            sc_lv<32> mem_addr;
+            int expected_data_count = 0;
+            
+            if(curr_layer == 0) {
+                mem_addr = INPUT_BASE_ADDR;
+                expected_data_count = 150528; // 3*224*224
+            }
+            else if(curr_layer == 1) {
+                if(data_type == WEIGHT) {
+                    mem_addr = CONV1_WEIGHT_ADDR;
+                    expected_data_count = 23232; // 64*3*11*11
+                } else {
+                    mem_addr = CONV1_BIAS_ADDR;
+                    expected_data_count = 64;
+                }
+            }
+            else if(curr_layer == 2) {
+                if(data_type == WEIGHT) {
+                    mem_addr = CONV2_WEIGHT_ADDR;
+                    expected_data_count = 307200; // 192*64*5*5
+                } else {
+                    mem_addr = CONV2_BIAS_ADDR;
+                    expected_data_count = 192;
+                }
+            }
+            else if(curr_layer == 3) {
+                if(data_type == WEIGHT) {
+                    mem_addr = CONV3_WEIGHT_ADDR;
+                    expected_data_count = 663552; // 384*192*3*3
+                } else {
+                    mem_addr = CONV3_BIAS_ADDR;
+                    expected_data_count = 384;
+                }
+            }
+            else if(curr_layer == 4) {
+                if(data_type == WEIGHT) {
+                    mem_addr = CONV4_WEIGHT_ADDR;
+                    expected_data_count = 884736; // 256*384*3*3
+                } else {
+                    mem_addr = CONV4_BIAS_ADDR;
+                    expected_data_count = 256;
+                }
+            }
+            else if(curr_layer == 5) {
+                if(data_type == WEIGHT) {
+                    mem_addr = CONV5_WEIGHT_ADDR;
+                    expected_data_count = 589824; // 256*256*3*3
+                } else {
+                    mem_addr = CONV5_BIAS_ADDR;
+                    expected_data_count = 256;
+                }
+            }
+            else if(curr_layer == 6) {
+                if(data_type == WEIGHT) {
+                    mem_addr = FC6_WEIGHT_ADDR;
+                    expected_data_count = 37748736; // 4096*9216
+                } else {
+                    mem_addr = FC6_BIAS_ADDR;
+                    expected_data_count = 4096;
+                }
+            }
+            else if(curr_layer == 7) {
+                if(data_type == WEIGHT) {
+                    mem_addr = FC7_WEIGHT_ADDR;
+                    expected_data_count = 16777216; // 4096*4096
+                } else {
+                    mem_addr = FC7_BIAS_ADDR;
+                    expected_data_count = 4096;
+                }
+            }
+            else if(curr_layer == 8) {
+                if(data_type == WEIGHT) {
+                    mem_addr = FC8_WEIGHT_ADDR;
+                    expected_data_count = 4096000; // 1000*4096
+                } else {
+                    mem_addr = FC8_BIAS_ADDR;
+                    expected_data_count = 1000;
+                }
+            }
+
+           // 計算需傳輸資料長度
+            int bytes_per_word = 4;
+            int max_axi_burst = 256;
+
+            uint32_t base_addr = mem_addr.to_uint();
+            int remaining = expected_data_count;
+            // cout << "remaining: " << remaining << endl;
+
+            while (remaining > 0) {
+                int burst_len = std::min(remaining, max_axi_burst);
+
+                // 發送 AXI read address transaction
+                axi_read_transaction(sc_lv<32>(base_addr), burst_len);
+
+                int received = 0;
+                while (true) {
+                    if (RVALID.read() && RREADY.read()) {
+                        // 真正有資料了
+                        uint32_t data_bits = RDATA.read().to_uint();
+                        float value;
+                        std::memcpy(&value, &data_bits, sizeof(float));
+                        input_data.push_back(value);
+                        received++;
+                        // 如果是最後一筆，就跳
+                        if (RLAST.read()) {
+                            // cout << "last value: " << value << endl;
+                            break;
+                        }
+                    }
+                    wait(); // 等下一個時脈
+                
+                }
+                // 確保這次 burst 確實收到了 burst_len 筆
+                if (received != burst_len) {
+                    cout << "Warning: expected " << burst_len
+                        << " beats, but got " << received << endl;
+                }
+
+                remaining -= burst_len;
+                base_addr += burst_len * bytes_per_word;
+            }
+
+            RREADY.write(false);
+            // cout << "Data fetch complete: layer " << curr_layer
+            //     << ", type " << (data_type == WEIGHT ? "WEIGHT" : (data_type == BIAS ? "BIAS" : "INPUT"))
+            //     << ", count = " << input_data.size() << endl;
+
+            // 將資料轉為 flits 並送出
+            packet2flit(input_data, curr_layer, data_type);
+            input_data.clear();
+        }
+    }
+}
+
+void Controller::receive(){
+    // Wait for result (from PE9)
+    std::vector<float> result;
+    bool set;
+    while (true) {
+        wait();
+        if (rst.read()) {
+            ack_rx.write(false);
+            set = false;
+            continue;
+        }
+        if (req_rx.read()) {
+            sc_lv<34> flit = flit_rx.read();
+            sc_lv<2> type = flit.range(33, 32);
+            if (type == "00") {
+                // body flit → data
+                uint32_t bits = flit.range(31, 0).to_uint();
+                float val;
+                std::memcpy(&val, &bits, sizeof(float));
+                // append to correct vector (based on current receiving context)
+                result.push_back(val);
+            }
+            if (type == "01") {
+                // cout << "Controller: Read..." << endl;
+                // open classes file
+                ifstream file("data/imagenet_classes.txt");
+                vector<string> img_class;
+                string line;
+                while (getline(file, line)) {
+                    img_class.push_back(line);
+                }
+                file.close();
+
+                vector<float> possibility = softmax(result);
+                std::vector<std::pair<float, int> > scores;
+                for (int i = 0; i < result.size(); ++i)
+                    scores.push_back(std::make_pair(result[i], i));
+                
+                std::sort(scores.begin(), scores.end(), comparePairs);
+                std::sort(possibility.begin(), possibility.end(), greater<float>());
+
+                cout << "Top 100 classes:" << endl;
+                cout << "=================================================" << endl;
+                cout << right << setw(5) << "idx"
+                    << " | " << setw(8) << "val"
+                    << " | " << setw(11) << "possibility"
+                    << " | " << "class name" << endl;
+                cout << "-------------------------------------------------" << endl;
+
+                for (int i = 0; i < 100 && i < scores.size(); ++i) {
+                    int idx = scores[i].second;
+                    cout << right << setw(5) << idx
+                        << " | " << setw(8) << fixed << setprecision(2) << scores[i].first
+                        << " | " << setw(11) << fixed << setprecision(2) << possibility[i] * 100
+                        << " | " << img_class[idx] << endl;
+                }
+
+                cout << "=================================================" << endl;
+                print_pass();
+                sc_stop();
+            }
+            ack_rx.write(true);
+        } else {
+            ack_rx.write(false);
+        }
+    }
+}
+
+void print_pass(){
+    string pass_str = "\033[0m\033[1;32mCongratulations !!\033[0m";
+    
+    
+    ostringstream cycle_stream;
+    cycle_stream << get_cycle();  
+    string cycle_str = "at " + cycle_stream.str() + " th cycle"; 
+
+    cout << endl;
+    cout << "  ============================                  " << endl;
+    cout << "  +                          +         |\\__|\\ " << endl;
+    cout << "  +   " << pass_str << "     +        / O.O  |  " << endl;
+    cout << "  +                          +      /_____   |  " << endl;
+    cout << "  +   Simulation completed   +     /^ ^ ^ \\  | " << endl;
+    cout << "  +   " << left << setw(20) << cycle_str << "   +    |^ ^ ^ ^ |w| " << endl;
+    cout << "  +                          +     \\m___m__|_| " << endl;
+    cout << "  ============================                  " << endl;
+}
+
+#ifndef CORE_H
+#define CORE_H
+
+#include "systemc.h"
+#include <vector>
+using namespace std;
+
+SC_MODULE( Core ) {
+    sc_in  < bool >  rst_n;
+    sc_in  < bool >  clk;
+    // receive
+    sc_in  < sc_lv<34> > flit_rx;	// The input channel
+    sc_in  < bool > req_rx;	        // The request associated with the input channel
+    sc_out < bool > ack_rx;	        // The outgoing ack signal associated with the input channel
+    // transmit
+    sc_out < sc_lv<34> > flit_tx;	// The output channel
+    sc_out < bool > req_tx;	        // The request associated with the output channel
+    sc_in  < bool > ack_tx;	        // The outgoing ack signal associated with the output channel
+
+    int core_id;
+
+    SC_CTOR(Core) {
+        SC_THREAD(receive);
+        sensitive << clk.pos();
+        dont_initialize();
+
+        SC_THREAD(send);
+        sensitive << clk.pos();
+        dont_initialize();
+    }
+    void receive();
+    void send();
+
+    bool send_req;
+    int data_type;
+
+    std::vector<float> result;
+    long data_in_pos;
+
+    long layer_compute_start;
+    long layer_compute_end ;
+
+    vector<float> zero_pad_flat(const vector<float>& input, int c, int h, int w, int pad_top, int pad_left, int pad_bottom, int pad_right);
+    vector<float> conv_layer(const vector<float>& input, const vector<float>& weight, const vector<float>& bias, int in_c, int in_h, int in_w, int f_size, int out_c, int stride, int pad);
+    vector<float> max_pool(const vector<float>& input, int c, int h, int w, int pool_size, int stride);
+    vector<float> fully_connect(const vector<float>& input, const vector<float>& weight, const vector<float>& bias, int input_size, int num_neurons);
+};
+
+#endif
+
+#include "core.h"
+#include <vector>
+#include <cmath>
+#include <cstring>
+#include <algorithm>
+#include <iostream>
+#include <sstream>
+
+enum DATA { INPUT = 0, WEIGHT = 1, BIAS = 2, OUTPUT = 3 };
+#define get_cycle() int(sc_time_stamp().to_seconds() * 1e9 / 10)
+
+// Zero Padding
+vector<float> Core::zero_pad_flat(const vector<float>& input, int c, int h, int w,
+                       int pad_top, int pad_left, int pad_bottom, int pad_right) {
+    int new_h = h + pad_top + pad_bottom;
+    int new_w = w + pad_left + pad_right;
+    vector<float> output(c * new_h * new_w, 0.0f);
+    for (int ch = 0; ch < c; ++ch) {
+        for (int i = 0; i < h; ++i) {
+            for (int j = 0; j < w; ++j) {
+                output[ch * new_h * new_w + (i + pad_top) * new_w + (j + pad_left)] =
+                    input[ch * h * w + i * w + j];
+            }
+        }
+    }
+    return output;
+}
+
+// Convolutional Layer + ReLU
+vector<float> Core::conv_layer(const vector<float>& input, const vector<float>& weight, const vector<float>& bias,
+                   int in_c, int in_h, int in_w, int f_size, int out_c, int stride, int pad) {
+    int out_h = (in_h - f_size + 2 * pad) / stride + 1;
+    int out_w = (in_w - f_size + 2 * pad) / stride + 1;
+    vector<float> output(out_c * out_h * out_w);
+
+    for (int oc = 0; oc < out_c; ++oc) {
+        for (int oh = 0; oh < out_h; ++oh) {
+            for (int ow = 0; ow < out_w; ++ow) {
+                float sum = 0.0f;
+                for (int ic = 0; ic < in_c; ++ic) {
+                    for (int i = 0; i < f_size; ++i) {
+                        for (int j = 0; j < f_size; ++j) {
+                            int in_i = oh * stride + i - pad;
+                            int in_j = ow * stride + j - pad;
+                            float in_val = 0.0f;
+                            if (in_i >= 0 && in_j >= 0 && in_i < in_h && in_j < in_w) {
+                                int input_idx = ic * in_h * in_w + in_i * in_w + in_j;
+                                in_val = input[input_idx];
+                            }
+                            int filter_idx = oc * in_c * f_size * f_size + ic * f_size * f_size + i * f_size + j;
+                            sum += in_val * weight[filter_idx];
+                        }
+                    }
+                }
+                float val = sum + bias[oc];
+                val = (val > 0) ? val : 0; // ReLU
+                output[oc * out_h * out_w + oh * out_w + ow] = val;
+            }
+        }
+    }
+    return output;
+}
+
+// Max Pooling
+vector<float> Core::max_pool(const vector<float>& input, int c, int h, int w,
+                  int pool_size, int stride) {
+    int out_h = (h - pool_size) / stride + 1;
+    int out_w = (w - pool_size) / stride + 1;
+    vector<float> output(c * out_h * out_w);
+
+    for (int ch = 0; ch < c; ++ch) {
+        for (int i = 0; i < out_h; ++i) {
+            for (int j = 0; j < out_w; ++j) {
+                float max_val = -1e9f;
+                for (int m = 0; m < pool_size; ++m) {
+                    for (int n = 0; n < pool_size; ++n) {
+                        int r = i * stride + m;
+                        int cidx = j * stride + n;
+                        int idx = ch * h * w + r * w + cidx;
+                        if (r < h && cidx < w) {
+                            max_val = max(max_val, input[idx]);
+                        }
+                    }
+                }
+                output[ch * out_h * out_w + i * out_w + j] = max_val;
+            }
+        }
+    }
+    return output;
+}
+
+// Fully Connected Layer
+vector<float> Core::fully_connect(const vector<float>& input, const vector<float>& weight, const vector<float>& bias,
+                       int input_size, int num_neurons) {
+    vector<float> output(num_neurons);
+    for (int n = 0; n < num_neurons; ++n) {
+        float sum = 0.0f;
+        for (int i = 0; i < input_size; ++i)
+            sum += input[i] * weight[n * input_size + i];
+        float val = sum + bias[n];
+        if(core_id != 8) val = (val > 0) ? val : 0;
+        output[n] = val;
+    }
+    return output;
+}
+
+void Core::receive() {
+    std::vector<float> weight;
+    std::vector<float> bias;
+    std::vector<float> input_data;
+    bool has_input;
+    bool has_weight;
+    bool has_bias;
+    bool receive;
+
+    while (true) {
+        wait();
+        if (rst_n.read()) {            
+            ack_rx.write(false);
+            has_input = false;
+            has_weight = false;
+            has_bias = false;
+            receive = false;
+            continue;
+        }
+
+        if(req_rx.read()) {
+            sc_lv<34> flit = flit_rx.read();
+            std::string type = flit.range(33, 32).to_string();
+            if(type == "10"){  // head
+                receive = true;
+                data_type = flit.range(23, 22).to_uint();
+            }
+            else if(type == "00"){  // body
+                uint32_t bits = flit.range(31, 0).to_uint();
+                float val;
+                std::memcpy(&val, &bits, sizeof(float));
+            
+                if (data_type == INPUT) input_data.push_back(val);
+                else if (data_type == WEIGHT) weight.push_back(val);
+                else if (data_type == BIAS) bias.push_back(val);
+            }
+            else if (type == "01") {  // tail flit
+                if (data_type == INPUT) has_input = true;
+                else if (data_type == WEIGHT) has_weight = true;
+                else if (data_type == BIAS) has_bias = true;
+                // cout << "Core: tail" << endl;
+            }
+            ack_rx.write(true);
+            continue;
+        }
+        else{
+            ack_rx.write(false);
+        }
+
+        // executing the layer according to PE ID
+        if (core_id == 0 && has_input) {                
+            cout << "-----------------------------------" << endl;
+            layer_compute_start = get_cycle();
+            cout << "[Cycle " << layer_compute_start << "] Core " << core_id << " compute start" << endl;
+            // cout << "core_id: " << core_id << " start!" << endl;
+            cout << "input_data.size(): " << input_data.size() << endl;
+            result = zero_pad_flat(input_data, 3, 224, 224, 2, 2, 1, 1);
+            // cout << "core_id: " << core_id << " done!" << endl;
+            // cout << "result.size(): " << result.size() << endl;
+            input_data.clear();
+            weight.clear();
+            bias.clear();
+            send_req = true;
+            has_input = false;
+            has_weight = false;
+            has_bias = false;
+        } 
+        else if(has_input && has_weight && has_bias){
+            cout << "-----------------------------------" << endl;
+            layer_compute_start = get_cycle();
+            cout << "[Cycle " << layer_compute_start << "] Core " << core_id << " compute start" << endl;
+            // cout << "core_id: " << core_id << " start!" << endl;
+            cout << "input_data.size(): " << input_data.size() << endl;
+            cout << "weight.size(): " << weight.size() << endl;
+            cout << "bias.size(): " << bias.size() << endl;
+            // cout << "input_data[0]: " << input_data[0] << endl;
+            // cout << "weight[0]: " << weight[0] << endl;
+            // for (int i = 0; i < bias.size(); i++){
+            //     cout << "bias[i]: " << bias[i] << " ";
+            // }
+            
+            if (core_id == 1) {
+                // cout << "weight.size(): " << weight.size() << endl;
+                // cout << "bias.size(): " << bias.size() << endl;
+                vector<float> conv = conv_layer(input_data, weight, bias, 3, 227, 227, 11, 64, 4, 0);
+                result = max_pool(conv, 64, 55, 55, 3, 2);
+            } 
+            else if (core_id == 2) {
+                vector<float> conv = conv_layer(input_data, weight, bias, 64, 27, 27, 5, 192, 1, 2);
+                result = max_pool(conv, 192, 27, 27, 3, 2);
+            } 
+            else if (core_id == 3) {
+                result = conv_layer(input_data, weight, bias, 192, 13, 13, 3, 384, 1, 1);
+            } 
+            else if (core_id == 4) {
+                result = conv_layer(input_data, weight, bias, 384, 13, 13, 3, 256, 1, 1);
+            } 
+            else if (core_id == 5) {
+                vector<float> conv = conv_layer(input_data, weight, bias, 256, 13, 13, 3, 256, 1, 1);
+                result = max_pool(conv, 256, 13, 13, 3, 2);
+            } 
+            else if (core_id == 6) {
+                // cout << endl;
+                // for(int i = 0; i < input_data.size(); i++){
+                //     cout << input_data[i] << " ";
+                // }
+                result = fully_connect(input_data, weight, bias, 9216, 4096);
+            } 
+            else if (core_id == 7) {
+                result = fully_connect(input_data, weight, bias, 4096, 4096);
+            } 
+            else if (core_id == 8) {
+                result = fully_connect(input_data, weight, bias, 4096, 1000);
+            } 
+            cout << "core_id: " << core_id << " done!" << endl;
+            cout << "result.size(): " << result.size() << endl;
+            
+            input_data.clear();
+            weight.clear();
+            bias.clear();
+            send_req = true;
+            has_input = false;
+            has_weight = false;
+            has_bias = false;
+        }
+        
+    }
+}
+
+void Core::send(){
+    while(true){
+        wait();
+        if (rst_n.read()) {
+            req_tx.write(false);
+            flit_tx.write(0);
+            continue;
+        }
+        // send flits to next PE（or Controller）
+        if(send_req){
+            do{ wait(); } while(req_rx.read());
+            for (int i = 0; i < result.size() + 2; ++i) {
+                sc_lv<34> flit;
+                string type = (i == 0) ? "10" : (i == result.size() + 1) ? "01" : "00";
+                
+                flit.range(33, 32) = type.c_str();
+                if(type == "10" || type == "01"){
+                    int num = 8;
+                    flit.range(31, 28) = sc_lv<4>(core_id);
+                    flit.range(27, 24) = (core_id < num) ? sc_lv<4>(core_id + 1) : sc_lv<4>(0); // next PE or Controller
+                    flit.range(23, 22) = (core_id < num) ? INPUT : OUTPUT;
+                }
+                else{
+                    uint32_t bits;
+                    std::memcpy(&bits, &result[i - 1], sizeof(float));
+                    flit.range(31, 0) = bits;
+                }
+                req_tx.write(true);
+                flit_tx.write(flit);
+                do { wait(); } while (!ack_tx.read());
+                req_tx.write(false);
+                // cout << "sending..." << endl;
+                // wait();
+            }
+            send_req = false;
+            cout << "all data send to router!" << endl;
+            layer_compute_end = get_cycle();
+            cout << "[Cycle " << layer_compute_end << "] Core " << core_id << " compute done, duration = "
+                << (layer_compute_end - layer_compute_start) << " cycles" << endl;
+            cout << "-----------------------------------" << endl;
+        }
+    }
+}
+
+#ifndef ROUTER_H
+#define ROUTER_H
+#include "systemc.h"
+#include <deque>
+
+// enumeration for directions
+enum Dir { EAST=0, SOUTH=1, WEST=2, NORTH=3, LOCAL=4 };
+#define OUTPUT 3
+
+SC_MODULE(Router) {
+    sc_in  < bool >  rst;
+    sc_in  < bool >  clk;
+
+    sc_out < sc_lv<34> >  out_flit[5];
+    sc_out < bool >  out_req[5];
+    sc_in  < bool >  in_ack[5];
+
+    sc_in  < sc_lv<34> >  in_flit[5];
+    sc_in  < bool >  in_req[5];
+    sc_out < bool >  out_ack[5];
+
+    int router_id;      // router id
+    int stored_o[5];    // store selected output direction for each input
+    int locked_by[5];   // output port lock owner (-1 if free)
+    std::deque<sc_lv<34> > in_buf[5];
+    std::deque<sc_lv<34> > out_buf[5];
+
+    SC_CTOR(Router) {
+        SC_THREAD(route);
+        sensitive << clk.pos();
+    }
+
+    void route();
+    int compute_dir(int dest, int type);
+    bool send_to_controller;
+};
+
+void Router::route() {
+    send_to_controller = false;
+    // Reset all state and buffers
+    for (int i = 0; i < 5; ++i) { 
+        out_req[i].write(false);
+        out_ack[i].write(false);
+
+        in_buf[i].clear();
+        out_buf[i].clear();
+        stored_o[i] = -1;
+        locked_by[i] = -1;
+    }
+    wait();     // wait for reset
+    int num = 0;
+
+    while (true) {
+        // receive flits
+        for (int i = 0; i < 5; ++i) {
+            if (in_req[i].read()) {
+                sc_lv<34> flit = in_flit[i].read();
+                in_buf[i].push_back(flit);
+                out_ack[i].write(true);
+                ++num;
+            } 
+            else {
+                out_ack[i].write(false);
+            }
+        }
+        // routing decision and forwarding to output buffer
+        // calculate direction only if it is header flit and locked it
+        for (int i = 0; i < 5; ++i) {
+            if (!in_buf[i].empty()) {
+                sc_lv<34> f = in_buf[i].front();
+                std::string type = f.range(33, 32).to_string();
+                if (stored_o[i] == -1) {
+                    // header
+                    if (type == "10") {
+                        // cout << "head router: " << router_id << " ";
+                        int dst = f.range(27, 24).to_uint();  // get destination
+                        int type = f.range(23, 22).to_uint();  // get type
+                        // cout << "type: " << type << endl;
+                        int o = compute_dir(dst, type);   // compute destination
+                        // cout << "locked_by[o]: " << locked_by[o] << endl;
+                        // cout << "direction: " << o << endl;
+                        if (locked_by[o] == -1) {
+                            stored_o[i] = o;
+                            locked_by[o] = i;
+                        }
+                    }
+                }
+
+                int o = stored_o[i];
+                if (locked_by[o] == i && out_buf[o].size() < 4) {
+                    out_buf[o].push_back(f);
+                    in_buf[i].pop_front();
+                    // tail
+                    if (type == "01") {
+                        // cout << "router: " << router_id;
+                        // cout << " dst: " << f.range(27, 24).to_uint() << " done" << endl;
+                        // cout << ", data_type: " << f.range(23, 22).to_uint() << endl;
+                        stored_o[i] = -1;
+                        locked_by[o] = -1;
+                    }
+                }
+            }
+        }
+
+        // transmit flit
+        for (int o = 0; o < 5; ++o) {
+            if (!out_buf[o].empty()) {
+                out_flit[o].write(out_buf[o].front());
+                out_req[o].write(true);
+
+                if (in_ack[o].read()) {
+                    out_buf[o].pop_front();
+                }
+            } 
+            else {
+                out_req[o].write(false);
+            }
+        }
+        // cout << "router sent packet" << endl;
+        wait(); // wait for next clock cycle
+    }
+}
+
+// calculate destination (route in x direction first, then y)
+int Router::compute_dir(int dest, int type) {
+    int NOC_SIZE = 3;
+    int x  = router_id % NOC_SIZE;
+    int y = router_id / NOC_SIZE;
+    int dx = dest % NOC_SIZE;
+    int dy = dest / NOC_SIZE;
+
+    if (router_id == 0 && type == OUTPUT) return NORTH;
+    // if (router_id == 8 && dest == 0) return WEST;
+    // if (x - dx == -2){
+    //     if (y == 1) return WEST;
+    //     if (y == 2) return SOUTH;
+    // }
+    // if (x - dx == 2){
+    //     if (y == 1) return EAST;
+    //     if (y == 2) return SOUTH;
+    // }
+    if (x < dx) return EAST;
+    if (x > dx) return WEST;
+    // if (abs(y - dy) == 2){
+    //     if (x == 0) return WEST;
+    //     if (x == 1) return (y < dy) ? NORTH : SOUTH;
+    //     if (x == 2) return EAST;
+    // }
+    if (y < dy) return SOUTH;
+    if (y > dy) return NORTH;
+    return LOCAL;
+}
+
+#endif
+
+//main.cpp
+#include "systemc.h"
+#include "core.h"
+#include "router.h"
+#include "clockreset.h"
+#include "controller.h"
+#include "ROM.h"
+#include <sstream>
+
+#define NOC_SIZE 3
+// enum Dir { EAST = 0, SOUTH = 1, WEST = 2, NORTH = 3, LOCAL = 4 };
+
+// local connection
+void connect_local(Core* core, Router* router, sc_signal<sc_lv<34> > (&flit)[2],
+                   sc_signal<bool> (&req)[2], sc_signal<bool> (&ack)[2]) {
+    core->flit_tx(flit[0]);
+    core->req_tx(req[0]);
+    router->in_flit[LOCAL](flit[0]);
+    router->in_req[LOCAL](req[0]);
+    router->in_ack[LOCAL](ack[0]);
+    core->ack_rx(ack[0]);
+
+    router->out_flit[LOCAL](flit[1]);
+    router->out_req[LOCAL](req[1]);
+    core->flit_rx(flit[1]);
+    core->req_rx(req[1]);
+    core->ack_tx(ack[1]);
+    router->out_ack[LOCAL](ack[1]);
+}
+
+// connection between routers
+void connect_dir(Router* from, Router* to, Dir out_dir, Dir in_dir,
+                 sc_signal<sc_lv<34> >& flit, sc_signal<bool>& req, sc_signal<bool>& ack) {
+    from->out_flit[out_dir](flit);
+    from->out_req[out_dir](req);
+    from->in_ack[out_dir](ack);
+    to->in_flit[in_dir](flit);
+    to->in_req[in_dir](req);
+    to->out_ack[in_dir](ack);
+}
+
+// dummy port connections (for edges)
+void connect_edge(Router* r, Dir dir,
+                  sc_signal<sc_lv<34> >& flit_out, sc_signal<bool>& req_out, sc_signal<bool>& ack_in,
+                  sc_signal<sc_lv<34> >& flit_in,  sc_signal<bool>& req_in,  sc_signal<bool>& ack_out) {
+    r->out_flit[dir](flit_out);
+    r->out_req[dir](req_out);
+    r->in_ack[dir](ack_in);
+    r->in_flit[dir](flit_in);
+    r->in_req[dir](req_in);
+    r->out_ack[dir](ack_out);
+}
+
+int sc_main(int argc, char* argv[]) {
+    sc_signal<bool> clk, rst;
+
+    Clock clock("clock", 10);
+    Reset reset("reset", 20);
+    clock(clk);
+    reset(rst);
+
+    // Controller / ROM connection with AXI4 interface
+    Controller* controller = new Controller("controller");
+    ROM* rom = new ROM("rom");
+
+    // AXI4 Read Address Channel signals
+    sc_signal<sc_lv<4> >  axi_arid;
+    sc_signal<sc_lv<32> > axi_araddr;
+    sc_signal<sc_lv<8> >  axi_arlen;
+    sc_signal<sc_lv<3> >  axi_arsize;
+    sc_signal<sc_lv<2> >  axi_arburst;
+    sc_signal<bool>       axi_arvalid;
+    sc_signal<bool>       axi_arready;
+
+    // AXI4 Read Data Channel signals
+    sc_signal<sc_lv<4> >  axi_rid;
+    sc_signal<sc_lv<32> > axi_rdata;
+    sc_signal<sc_lv<2> >  axi_rresp;
+    sc_signal<bool>       axi_rlast;
+    sc_signal<bool>       axi_rvalid;
+    sc_signal<bool>       axi_rready;
+
+    // Connect Controller (Master)
+    controller->clk(clk);
+    controller->rst(rst);
+    
+    // AXI4 Read Address Channel - Controller as Master
+    controller->ARID(axi_arid);
+    controller->ARADDR(axi_araddr);
+    controller->ARLEN(axi_arlen);
+    controller->ARSIZE(axi_arsize);
+    controller->ARBURST(axi_arburst);
+    controller->ARVALID(axi_arvalid);
+    controller->ARREADY(axi_arready);
+
+    // AXI4 Read Data Channel - Controller as Master
+    controller->RID(axi_rid);
+    controller->RDATA(axi_rdata);
+    controller->RRESP(axi_rresp);
+    controller->RLAST(axi_rlast);
+    controller->RVALID(axi_rvalid);
+    controller->RREADY(axi_rready);
+
+    // Connect ROM (Slave)
+    rom->clk(clk);
+    rom->rst(rst);
+    
+    // AXI4 Read Address Channel - ROM as Slave
+    rom->ARID(axi_arid);
+    rom->ARADDR(axi_araddr);
+    rom->ARLEN(axi_arlen);
+    rom->ARSIZE(axi_arsize);
+    rom->ARBURST(axi_arburst);
+    rom->ARVALID(axi_arvalid);
+    rom->ARREADY(axi_arready);
+
+    // AXI4 Read Data Channel - ROM as Slave
+    rom->RID(axi_rid);
+    rom->RDATA(axi_rdata);
+    rom->RRESP(axi_rresp);
+    rom->RLAST(axi_rlast);
+    rom->RVALID(axi_rvalid);
+    rom->RREADY(axi_rready);
+
+    // Router/Controller connection（ Router[0][0] LOCAL port）
+    sc_signal<sc_lv<34> > ctrl_flit[2];
+    sc_signal<bool> ctrl_req[2], ctrl_ack[2];
+
+    // NoC mesh building
+    Core* cores[NOC_SIZE][NOC_SIZE];
+    Router* routers[NOC_SIZE][NOC_SIZE];
+
+    sc_signal<sc_lv<34> > flit_local[NOC_SIZE][NOC_SIZE][2];
+    sc_signal<bool> req_local[NOC_SIZE][NOC_SIZE][2];
+    sc_signal<bool> ack_local[NOC_SIZE][NOC_SIZE][2];
+
+    sc_signal<sc_lv<34> > flit[NOC_SIZE][NOC_SIZE][4];
+    sc_signal<bool> req[NOC_SIZE][NOC_SIZE][4];
+    sc_signal<bool> ack[NOC_SIZE][NOC_SIZE][4];
+
+    sc_signal<sc_lv<34> > dummy_flit1[NOC_SIZE][NOC_SIZE][4], dummy_flit2[NOC_SIZE][NOC_SIZE][4];
+    sc_signal<bool> dummy_req1[NOC_SIZE][NOC_SIZE][4], dummy_req2[NOC_SIZE][NOC_SIZE][4];
+    sc_signal<bool> dummy_ack1[NOC_SIZE][NOC_SIZE][4], dummy_ack2[NOC_SIZE][NOC_SIZE][4];
+
+    for (int i = 0; i < NOC_SIZE; ++i) {
+        for (int j = 0; j < NOC_SIZE; ++j) {
+            std::ostringstream name;
+            int id = i * NOC_SIZE + j;
+
+            name << "Router_" << id;
+            routers[i][j] = new Router(name.str().c_str());
+            routers[i][j]->clk(clk);
+            routers[i][j]->rst(rst);
+            routers[i][j]->router_id = id;  // set router ID
+
+            name.str(""); name.clear();
+            name << "Core_" << id;
+            cores[i][j] = new Core(name.str().c_str());
+            cores[i][j]->clk(clk);
+            cores[i][j]->rst_n(rst);
+            cores[i][j]->core_id = id;
+
+            connect_local(cores[i][j], routers[i][j],
+                                            flit_local[i][j], req_local[i][j], ack_local[i][j]);
+        }
+    }
+
+    // Controller <-> Router[0][0] LOCAL
+    controller->flit_tx(ctrl_flit[0]);
+    controller->req_tx(ctrl_req[0]);
+    routers[0][0]->in_flit[NORTH](ctrl_flit[0]);
+    routers[0][0]->in_req[NORTH](ctrl_req[0]);
+    routers[0][0]->in_ack[NORTH](ctrl_ack[0]);
+    controller->ack_rx(ctrl_ack[0]);
+
+    routers[0][0]->out_flit[NORTH](ctrl_flit[1]);
+    routers[0][0]->out_req[NORTH](ctrl_req[1]);
+    controller->flit_rx(ctrl_flit[1]);
+    controller->req_rx(ctrl_req[1]);
+    controller->ack_tx(ctrl_ack[1]);
+    routers[0][0]->out_ack[NORTH](ctrl_ack[1]);
+
+
+    // Mesh direction connection
+    for (int i = 0; i < NOC_SIZE; ++i) {
+        for (int j = 0; j < NOC_SIZE; ++j) {
+            if (j < NOC_SIZE-1)
+                connect_dir(routers[i][j], routers[i][j+1], EAST, WEST, flit[i][j][EAST], req[i][j][EAST], ack[i][j][EAST]);
+            else
+                connect_edge(routers[i][j], EAST,
+                             dummy_flit1[i][j][EAST], dummy_req1[i][j][EAST], dummy_ack1[i][j][EAST],
+                             dummy_flit2[i][j][EAST], dummy_req2[i][j][EAST], dummy_ack2[i][j][EAST]);
+
+            if (i < NOC_SIZE-1)
+                connect_dir(routers[i][j], routers[i+1][j], SOUTH, NORTH, flit[i][j][SOUTH], req[i][j][SOUTH], ack[i][j][SOUTH]);
+            else
+                connect_edge(routers[i][j], SOUTH,
+                             dummy_flit1[i][j][SOUTH], dummy_req1[i][j][SOUTH], dummy_ack1[i][j][SOUTH],
+                             dummy_flit2[i][j][SOUTH], dummy_req2[i][j][SOUTH], dummy_ack2[i][j][SOUTH]);
+
+            if (j > 0)
+                connect_dir(routers[i][j], routers[i][j-1], WEST, EAST, flit[i][j][WEST], req[i][j][WEST], ack[i][j][WEST]);
+            else
+                connect_edge(routers[i][j], WEST,
+                            dummy_flit1[i][j][WEST], dummy_req1[i][j][WEST], dummy_ack1[i][j][WEST],
+                            dummy_flit2[i][j][WEST], dummy_req2[i][j][WEST], dummy_ack2[i][j][WEST]);
+
+            if (i > 0)
+                connect_dir(routers[i][j], routers[i-1][j], NORTH, SOUTH, flit[i][j][NORTH], req[i][j][NORTH], ack[i][j][NORTH]);
+            else
+                if(i!=0 || j!=0) connect_edge(routers[i][j], NORTH,
+                             dummy_flit1[i][j][NORTH], dummy_req1[i][j][NORTH], dummy_ack1[i][j][NORTH],
+                             dummy_flit2[i][j][NORTH], dummy_req2[i][j][NORTH], dummy_ack2[i][j][NORTH]);
+        }
+    }
+
+    sc_start();
+    return 0;
+}
